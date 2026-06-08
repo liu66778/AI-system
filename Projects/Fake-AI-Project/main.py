@@ -1,6 +1,6 @@
 """
-Cyber Mentor v3.0 — 菜单交互版
-支持：记录学习 | 查看历史 | 搜索记忆 | AI问答
+Cyber Mentor v4.0 — 数据库版
+SQLite 存储 + 学习仪表盘 + 自动 Git 提交
 """
 from datetime import datetime
 import os
@@ -12,15 +12,18 @@ if sys.platform == "win32":
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8")
     sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8")
 
-# 把 src 目录加到路径，方便 import rag
+# 把 src 加到路径
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "src"))
+
+from database import init_db, migrate_from_txt, add_record, get_all_records, has_today_record
+from stats import print_dashboard
+from git_auto import auto_commit
 
 NAME = "刘焕玉"
 
 # 文件路径
-PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))  # Fake-AI-Project/
-LOG_FILE = os.path.join(PROJECT_DIR, "study_log.txt")
-BASE_DIR = os.path.dirname(os.path.dirname(PROJECT_DIR))  # AI-system/
+PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
+BASE_DIR = os.path.dirname(os.path.dirname(PROJECT_DIR))
 DIARY_PATH = os.path.join(BASE_DIR, "Notes", "Cyber-Diary.md")
 
 
@@ -29,67 +32,75 @@ DIARY_PATH = os.path.join(BASE_DIR, "Notes", "Cyber-Diary.md")
 # ═══════════════════════════════════════════════════
 
 def welcome():
-    """显示欢迎语"""
     print(f"\n👤 {NAME}，欢迎回到 Cyber Mentor")
     print("=" * 40)
 
 
 def show_history():
-    """显示最近学习记录"""
+    """从数据库读取最近记录"""
     print("\n📚 历史学习记录：")
-    try:
-        with open(LOG_FILE, "r", encoding="utf-8") as f:
-            log = f.read().strip()
-            if log:
-                lines = log.split("\n")
-                recent = lines[-20:] if len(lines) > 20 else lines
-                for line in recent:
-                    print(f"  {line}")
-                count = len([l for l in lines if l.startswith("[")])
-                print(f"  ...共 {count} 条记录")
-            else:
-                print("  （暂无）")
-    except FileNotFoundError:
+    records = get_all_records(limit=20)
+    if not records:
         print("  （暂无）")
+        return
+
+    for r in reversed(records):
+        mood_icon = {1:"😫", 2:"😣", 3:"😐", 4:"🙂", 5:"😊",
+                     6:"😄", 7:"🤩", 8:"🎉", 9:"🔥", 10:"💯"}.get(r["mood"], "😊")
+        print(f"  [{r['timestamp']}] {mood_icon} {r['content'][:60]}")
+
+    total = len(get_all_records(limit=9999))
+    print(f"  ...共 {total} 条记录")
 
 
-def save_study(study, mood):
-    """保存学习内容"""
-    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    with open(LOG_FILE, "a", encoding="utf-8") as f:
-        f.write(f"\n[{now}] 心情:{mood}/10\n")
-        f.write(f"  {study}\n")
-
-
-def update_diary(study, mood):
+def update_diary(content, mood):
     """写入赛博日记（按日期归档）"""
     today = datetime.now().strftime("%Y-%m-%d")
     diary_path = os.path.normpath(DIARY_PATH)
+    os.makedirs(os.path.dirname(diary_path), exist_ok=True)
 
     already_written = False
     if os.path.exists(diary_path):
         with open(diary_path, "r", encoding="utf-8") as f:
             already_written = today in f.read()
 
-    os.makedirs(os.path.dirname(diary_path), exist_ok=True)
-
     if not already_written:
         with open(diary_path, "a", encoding="utf-8") as f:
             f.write(f"\n## {today}\n\n")
             f.write(f"- 😊 心情：{mood}/10\n")
-            f.write(f"- 📖 学习：{study}\n")
+            f.write(f"- 📖 学习：{content}\n")
     else:
         with open(diary_path, "a", encoding="utf-8") as f:
-            f.write(f"- 📖 补充学习：{study}\n")
+            f.write(f"- 📖 补充学习：{content}\n")
 
 
 def do_record():
     """记录今天的学习"""
+    today_already = has_today_record()
+    if today_already:
+        print("\n📌 你今天已经记录过了，可以追加")
+
     study = input("\n📖 今天学了什么：")
+    if not study.strip():
+        print("⚠️ 内容不能为空")
+        return
+
     mood = input("😊 心情如何（1-10）：")
-    save_study(study, mood)
+    try:
+        mood = int(mood)
+        if mood < 1 or mood > 10:
+            mood = 5
+    except ValueError:
+        mood = 5
+
+    add_record(study, mood)
     update_diary(study, mood)
-    print("\n✅ 记录已保存。继续加油！")
+    print("\n✅ 记录已保存！")
+
+    # 自动 Git 提交
+    print("📤 自动提交到 GitHub...", end=" ")
+    ok, msg = auto_commit()
+    print(msg)
 
 
 def do_search():
@@ -107,7 +118,7 @@ def do_search():
             print(f"  {content.strip()[:200]}")
             print(f"  ---")
     except ImportError:
-        print("\n⚠️ rag.py 未找到，请检查 src/ 目录")
+        print("\n⚠️ rag.py 未找到")
 
 
 def do_ask():
@@ -122,7 +133,12 @@ def do_ask():
         answer = ask_ai(question, context)
         print(answer)
     except ImportError:
-        print("\n⚠️ rag.py 未找到，请检查 src/ 目录")
+        print("\n⚠️ rag.py 未找到")
+
+
+def do_stats():
+    """学习仪表盘"""
+    print_dashboard()
 
 
 # ═══════════════════════════════════════════════════
@@ -133,8 +149,9 @@ MENU = {
     "1": ("📖 记录学习", do_record),
     "2": ("📚 查看历史", show_history),
     "3": ("🔍 搜索记忆", do_search),
-    "4": ("🤖 AI 问答", do_ask),
-    "5": ("👋 退出", None),
+    "4": ("🤖 AI 问答",   do_ask),
+    "5": ("📊 学习统计", do_stats),
+    "6": ("👋 退出",     None),
 }
 
 
@@ -145,22 +162,34 @@ def show_menu():
     print("─" * 30)
 
 
+# ═══════════════════════════════════════════════════
+# 入口
+# ═══════════════════════════════════════════════════
+
 def main():
+    # 启动时迁移旧数据
+    migrated = migrate_from_txt()
+    if migrated > 0:
+        print(f"📦 已从旧文件迁移 {migrated} 条记录到数据库")
+
+    # 确保数据库就绪
+    init_db()
+
     welcome()
     show_history()
 
     while True:
         show_menu()
-        choice = input("👉 选择 (1-5)：").strip()
+        choice = input("👉 选择 (1-6)：").strip()
 
-        if choice == "5":
+        if choice == "6":
             print("\n👋 再见，记得今天也学点什么！")
             break
 
         if choice in MENU and MENU[choice][1] is not None:
             MENU[choice][1]()
         else:
-            print("\n⚠️ 请输入 1-5")
+            print("\n⚠️ 请输入 1-6")
 
 
 if __name__ == "__main__":

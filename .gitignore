@@ -4,3 +4,8 @@ __pycache__/
 *.pyo
 .DS_Store
 .env
+
+# 数据文件（包含个人信息，不上传）
+*.db
+*.sqlite
+*.bak

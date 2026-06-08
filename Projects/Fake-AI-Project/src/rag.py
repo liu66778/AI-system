@@ -33,7 +33,11 @@ MODEL = os.getenv("MODEL", "deepseek-chat")
 PROJECT_DIR = Path(__file__).resolve().parent.parent  # Fake-AI-Project/
 BASE_DIR = PROJECT_DIR.parent.parent  # AI-system/
 DIARY_PATH = BASE_DIR / "Notes" / "Cyber-Diary.md"
-STUDY_LOG_PATH = PROJECT_DIR / "study_log.txt"
+
+# 确保 src 在 path 中（独立运行时也能导入同目录模块）
+_src = str(Path(__file__).resolve().parent)
+if _src not in sys.path:
+    sys.path.insert(0, _src)
 
 
 # ═══════════════════════════════════════════════════
@@ -48,10 +52,17 @@ def load_diary():
 
 
 def load_study_log():
-    """加载学习记录"""
-    if not STUDY_LOG_PATH.exists():
+    """从数据库加载学习记录"""
+    try:
+        from database import get_all_records
+        records = get_all_records(limit=200)
+        lines = []
+        for r in reversed(records):
+            lines.append(f"[{r['timestamp']}] 心情:{r['mood']}/10")
+            lines.append(f"  {r['content']}")
+        return "\n".join(lines)
+    except ImportError:
         return ""
-    return STUDY_LOG_PATH.read_text(encoding="utf-8")
 
 
 def search(query, top_n=5):
@@ -172,7 +183,7 @@ def chat():
     """交互式问答循环"""
     print("🧠 Cyber Mentor 智能问答（输入 quit 退出）")
     print("=" * 45)
-    print(f"📚 数据源：日记 + {STUDY_LOG_PATH.name}")
+    print(f"📚 数据源：日记 + 数据库")
     if not API_KEY or API_KEY == "sk-your-api-key-here":
         print("⚠️  API 未配置（问答会提示错误）")
     print()
