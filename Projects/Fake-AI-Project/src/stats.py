@@ -1,13 +1,13 @@
 """
 统计分析模块 — 学习仪表盘
-从数据库提取数据，算连续天数/心情趋势/高频主题
+从数据库提取数据，算连续天数/心情趋势/高频主题/标签分布
 """
 from datetime import datetime, timedelta
 from collections import Counter
 import re
 from database import (
     get_distinct_dates, get_mood_stats, get_all_records,
-    get_total_count, has_today_record
+    get_total_count, has_today_record, get_tag_stats
 )
 
 
@@ -21,10 +21,7 @@ def get_current_streak():
     if not dates:
         return 0
     today = datetime.now().strftime("%Y-%m-%d")
-
-    # 今天没记录就从昨天开始算
     check = datetime.now() if today in dates else datetime.now() - timedelta(days=1)
-
     streak = 0
     while check.strftime("%Y-%m-%d") in dates:
         streak += 1
@@ -91,6 +88,7 @@ def get_weekly_summary():
         "avg_mood": get_avg_mood(),
         "total_records": get_total_count(),
         "top_themes": get_top_themes(5),
+        "tag_stats": get_tag_stats(),
         "mood_trend": get_mood_stats(),
     }
 
@@ -103,7 +101,7 @@ def mood_bar(value):
 
 
 def print_dashboard():
-    """终端仪表盘"""
+    """终端仪表盘（含标签分布）"""
     s = get_weekly_summary()
     today_tag = "✅ 已记录" if s["today_studied"] else "❌ 还没记录"
 
@@ -116,13 +114,24 @@ def print_dashboard():
 ║  🏆 最长连续：{s['longest_streak']} 天                   ║
 ║  📚 累计学习：{s['total_days']} 天                   ║
 ║  📝 累计记录：{s['total_records']} 条                   ║
-║  😊 平均心情：{mood_bar(s['avg_mood'])}  ║
-╠══════════════════════════════════╣
-║  📈 高频主题                       ║""")
+║  😊 平均心情：{mood_bar(s['avg_mood'])}  ║""")
 
-    for theme, count in s["top_themes"]:
-        bar = "█" * min(count, 15)
-        print(f"║    {theme:<10} {bar} {count}次{'':<8}║".replace('\n', ''))
+    # 标签分布
+    if s["tag_stats"]:
+        print("╠══════════════════════════════════╣")
+        print("║  🏷️  标签分布                       ║")
+        for tag in s["tag_stats"]:
+            bar_len = min(tag["count"], 10)
+            bar = "█" * bar_len + "░" * (10 - bar_len)
+            print(f"║  {tag['emoji']} {tag['name']:<6} {bar} {tag['count']:>3}次    ║")
+
+    # 高频主题
+    if s["top_themes"]:
+        print("╠══════════════════════════════════╣")
+        print("║  📈 高频主题                       ║")
+        for theme, count in s["top_themes"]:
+            bar = "█" * min(count, 15)
+            print(f"║    {theme:<10} {bar} {count}次{'':<8}║")
 
     # 心情趋势
     if s["mood_trend"]:
